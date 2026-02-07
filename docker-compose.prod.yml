@@ -5,7 +5,7 @@ services:
     image: mongo:8.2.4
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     ports:
-      - "27017:27017"
+      - "${MONGO_PORT:-27017}:27017"
     volumes:
       - mongo_data:/data/db
       - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
@@ -13,17 +13,22 @@ services:
   backend:
     build:
       context: ./backend
+    env_file:
+      - .env
     environment:
-      MONGODB_URI: mongodb://mongodb:27017/?replicaSet=rs0
-      MONGODB_DB: health_claims
-      PORT: 3001
-      PROFILER_ENABLED: "0"
-      SUMMARY_BOOTSTRAP_ON_START: "0"
-      CLAIM_INSERT_ENABLED: "0"
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/?replicaSet=rs0}
+      MONGODB_DB: ${MONGODB_DB:-health_claims}
+      PORT: ${PORT:-3001}
+      PROFILER_ENABLED: ${PROFILER_ENABLED:-0}
+      PROFILER_SLOW_MS: ${PROFILER_SLOW_MS:-1000}
+      SUMMARY_BOOTSTRAP_ON_START: ${SUMMARY_BOOTSTRAP_ON_START:-0}
+      CLAIM_INSERT_ENABLED: ${CLAIM_INSERT_ENABLED:-0}
+      CLAIM_INSERT_INTERVAL_MS: ${CLAIM_INSERT_INTERVAL_MS:-15000}
+      CLAIM_INSERT_BATCH: ${CLAIM_INSERT_BATCH:-5}
     depends_on:
       - mongodb
     ports:
-      - "3001:3001"
+      - "${BACKEND_PORT:-3001}:3001"
 
   frontend:
     build:
@@ -31,7 +36,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "8080:80"
+      - "${FRONTEND_PORT:-8080}:80"
 
 volumes:
   mongo_data:
