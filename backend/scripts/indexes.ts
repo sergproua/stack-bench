@@ -11,11 +11,14 @@ async function main() {
   const memoryLimitMb = Number(process.env.INDEX_BUILD_MEM_MB || 1024);
   const rebuild = process.argv.includes('--rebuild');
   const abortInProgress = process.argv.includes('--abort-in-progress');
+  const onlyArg = process.argv.find((arg) => arg.startsWith('--only='));
+  const onlyList = onlyArg ? onlyArg.replace('--only=', '').split(',').map((item) => item.trim()).filter(Boolean) : null;
 
   const client = new MongoClient(uri);
   await client.connect();
   const db = client.db(dbName);
   const adminDb = db.admin();
+  logger.info(`[indexes] connected to ${uri}/${dbName} (collection=claims)`);
 
   let memoryLimitApplied = false;
   try {
@@ -63,34 +66,47 @@ async function main() {
       }
     }
     const existing = await db.collection('claims').indexes();
-    const match = existing.find((idx) => sameKey(idx.key as Record<string, unknown>, key as Record<string, unknown>));
-    if (match?.name) {
-      if (rebuild) {
+    const byName = existing.find((idx) => idx.name === name);
+    const byKey = existing.find((idx) => sameKey(idx.key as Record<string, unknown>, key as Record<string, unknown>));
+
+    if (byName && !sameKey(byName.key as Record<string, unknown>, key as Record<string, unknown>)) {
+      // eslint-disable-next-line no-console
+      logger.warn(`[indexes] ${name} exists but key differs. Rebuilding to avoid stale definition.`);
+      try {
+        await db.collection('claims').dropIndex(name);
+      } catch (error) {
+        const message = (error as Error).message || '';
+        if (message.includes('unfinished index') || message.includes('IndexNotFound')) {
+          // eslint-disable-next-line no-console
+          logger.warn(`[indexes] unable to drop ${name} (still building). Skipping rebuild.`);
+          return;
+        }
+        throw error;
+      }
+    } else if (byKey && byKey.name) {
+      if (rebuild && byKey.name !== name) {
         // eslint-disable-next-line no-console
-        logger.info(`[indexes] dropping existing ${match.name} to rebuild ${name}`);
+        logger.info(`[indexes] dropping existing ${byKey.name} to rebuild ${name}`);
         try {
-          await db.collection('claims').dropIndex(match.name);
+          await db.collection('claims').dropIndex(byKey.name);
         } catch (error) {
           const message = (error as Error).message || '';
           if (message.includes('unfinished index') || message.includes('IndexNotFound')) {
             // eslint-disable-next-line no-console
-            logger.warn(`[indexes] unable to drop ${match.name} (still building). Skipping rebuild.`);
+            logger.warn(`[indexes] unable to drop ${byKey.name} (still building). Skipping rebuild.`);
             return;
           }
           throw error;
         }
       } else {
         // eslint-disable-next-line no-console
-        logger.info(`[indexes] skipping ${name} (already exists as ${match.name})`);
+        logger.info(`[indexes] skipping ${name} (already exists as ${byKey.name})`);
         return;
       }
-    } else if (match && !match.name) {
-      // eslint-disable-next-line no-console
-      logger.info(`[indexes] matched an unnamed index for ${name}; skip to avoid conflict`);
-      return;
     }
     try {
-      await db.collection('claims').createIndex(key, { name });
+      const createdName = await db.collection('claims').createIndex(key, { name });
+      logger.info(`[indexes] createIndex result: ${createdName}`);
     } catch (error) {
       const message = (error as Error).message || '';
       if (message.includes('IndexOptionsConflict') || message.includes('already exists with a different name')) {
@@ -105,11 +121,34 @@ async function main() {
     logger.info(`[indexes] finished ${name} in ${durationMs} ms`);
   };
 
-  // Priority order: cursor pagination, common filters, text search last.
-  await buildIndex('idx_claims_serviceDate_id', { serviceDate: -1, _id: -1 });
-  await buildIndex('idx_claims_status_amount', { status: 1, totalAmount: -1 });
-  await buildIndex('idx_claims_region_specialty', { memberRegion: 1, providerSpecialty: 1 });
-  await buildIndex('idx_claims_text', { searchText: 'text' });
+  const indexQueue: Array<{ key: IndexSpecification; name: string; tag: string }> = [
+    { name: 'idx_claims_serviceDate_id', key: { serviceDate: -1, _id: -1 }, tag: 'serviceDate' },
+    { name: 'idx_claims_status_amount', key: { status: 1, totalAmount: -1 }, tag: 'status' },
+    { name: 'idx_claims_region_specialty', key: { memberRegion: 1, providerSpecialty: 1 }, tag: 'region' },
+    { name: 'idx_claims_text', key: { searchText: 'text' }, tag: 'text' },
+  ];
+
+  const selected = onlyList
+    ? indexQueue.filter((idx) => onlyList.includes(idx.tag))
+    : indexQueue;
+
+  for (const idx of selected) {
+    await buildIndex(idx.name, idx.key);
+  }
+
+  try {
+    const finalIndexes = await db.collection('claims').indexes();
+    const missing = selected.filter((idx) => {
+      return !finalIndexes.some((existing) =>
+        sameKey(existing.key as Record<string, unknown>, idx.key as Record<string, unknown>));
+    });
+    if (missing.length > 0) {
+      logger.warn(`[indexes] missing indexes after build: ${missing.map((idx) => idx.name).join(', ')}`);
+      process.exitCode = 1;
+    }
+  } catch {
+    // ignore
+  }
 
   if (memoryLimitApplied) {
     try {
@@ -119,6 +158,13 @@ async function main() {
     } catch {
       // ignore
     }
+  }
+
+  try {
+    const indexNames = (await db.collection('claims').indexes()).map((idx) => idx.name);
+    logger.info(`[indexes] current indexes: ${indexNames.join(', ')}`);
+  } catch {
+    // ignore
   }
 
   // eslint-disable-next-line no-console

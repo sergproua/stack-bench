@@ -5,7 +5,7 @@
   "description": "NestJS backend for MongoDB performance demo",
   "scripts": {
     "start": "node dist/main.js",
-    "start:dev": "tsx watch src/main.ts",
+    "start:dev": "node -r @swc-node/register src/main.ts",
     "build": "npm run typecheck && swc src -d dist --source-maps",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "seed": "tsx scripts/seed.ts",
@@ -29,6 +29,7 @@
     "socket.io": "^4.7.4"
   },
   "devDependencies": {
+    "@swc-node/register": "^1.10.4",
     "@swc/cli": "^0.3.11",
     "@swc/core": "^1.4.17",
     "@types/node": "^20.11.17",

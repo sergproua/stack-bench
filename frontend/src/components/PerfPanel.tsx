@@ -1,4 +1,5 @@
 import type { PerfReport } from '../api';
+import { formatDuration, isSlowDuration } from '../utils/time';
 
 type Props = {
   report: PerfReport | null;
@@ -17,7 +18,11 @@ export default function PerfPanel({ report, loading, loadMs }: Props) {
 
   return (
     <div>
-      {loadMs !== null ? <div className="load-meta">Loaded in {loadMs} ms</div> : null}
+      {loadMs !== null ? (
+        <div className={`load-meta${isSlowDuration(loadMs) ? ' slow' : ''}`}>
+          Loaded in {formatDuration(loadMs)}
+        </div>
+      ) : null}
       <div className="metrics">
         {report.data.map((item) => (
           <div className="metric-card" key={item.label}>

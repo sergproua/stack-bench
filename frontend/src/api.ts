@@ -54,11 +54,20 @@ export type SlowOpsResponse = {
   meta: Record<string, unknown>;
 };
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const DEFAULT_API_URL = (() => {
+  if (import.meta.env.DEV) {
+    return 'http://localhost:3001/api';
+  }
+  if (typeof window !== 'undefined') {
+    return `${window.location.origin}/api`;
+  }
+  return 'http://localhost:3001/api';
+})();
+const API_URL = import.meta.env.VITE_API_URL || DEFAULT_API_URL;
 
-export async function fetchClaims(params: Record<string, string>) {
+export async function fetchClaims(params: Record<string, string>, signal?: AbortSignal) {
   const query = new URLSearchParams(params).toString();
-  const res = await fetch(`${API_URL}/claims?${query}`);
+  const res = await fetch(`${API_URL}/claims?${query}`, { signal });
   if (!res.ok) {
     throw new Error('Failed to load claims');
   }
@@ -87,7 +96,7 @@ export async function fetchSlowOps(params: {
   keyword?: string;
   startDate?: string;
   endDate?: string;
-} = {}) {
+} = {}, signal?: AbortSignal) {
   const search = new URLSearchParams();
   if (params.minMs) {
     search.set('minMs', String(params.minMs));
@@ -104,7 +113,7 @@ export async function fetchSlowOps(params: {
   if (params.endDate) {
     search.set('endDate', params.endDate);
   }
-  const res = await fetch(`${API_URL}/stats/slow-ops?${search.toString()}`);
+  const res = await fetch(`${API_URL}/stats/slow-ops?${search.toString()}`, { signal });
   if (!res.ok) {
     throw new Error('Failed to load slow ops');
   }

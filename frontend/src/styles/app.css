@@ -68,6 +68,7 @@ body {
   gap: 12px;
 }
 
+
 .tab {
   padding: 10px 16px;
   border-radius: 999px;
@@ -91,6 +92,18 @@ body {
   box-shadow: var(--shadow);
 }
 
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.panel-header .load-meta {
+  margin: 0;
+}
+
 .filters {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -111,6 +124,57 @@ body {
   border-radius: 10px;
   border: 1px solid var(--border);
   font-family: inherit;
+}
+
+.icon-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.filter-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.filter-actions .icon-button {
+  width: 28px;
+  height: 28px;
+}
+
+.filter-actions-left {
+  display: flex;
+  gap: 8px;
+}
+
+.filter-actions-right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.icon-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.icon-button.danger {
+  border-color: #d24b2a;
+  color: #d24b2a;
+}
+
+.icon-button.danger:hover {
+  background: #fbeae4;
 }
 
 .table-header {
@@ -180,6 +244,24 @@ body {
   background: #fff9f2;
 }
 
+.metric-card.pop {
+  animation: metric-pop 700ms ease;
+  border-color: #d24b2a;
+  box-shadow: 0 12px 24px rgba(210, 75, 42, 0.12);
+}
+
+@keyframes metric-pop {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  40% {
+    transform: translateY(-2px) scale(1.02);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
 .metric-card h3 {
   margin: 0 0 6px;
   font-size: 16px;
@@ -196,6 +278,16 @@ body {
   color: var(--muted);
   font-size: 12px;
   font-family: "IBM Plex Mono", monospace;
+}
+
+.load-meta.loading {
+  color: #d24b2a;
+  font-weight: 600;
+}
+
+.load-meta.slow {
+  color: #d24b2a;
+  font-weight: 600;
 }
 
 .modal-backdrop {

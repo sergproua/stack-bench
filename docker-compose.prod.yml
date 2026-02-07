@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:8.2.4
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      MONGODB_DB: health_claims
+      PORT: 3001
+      PROFILER_ENABLED: "0"
+      SUMMARY_BOOTSTRAP_ON_START: "0"
+      CLAIM_INSERT_ENABLED: "0"
+    depends_on:
+      - mongodb
+    ports:
+      - "3001:3001"
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  mongo_data:

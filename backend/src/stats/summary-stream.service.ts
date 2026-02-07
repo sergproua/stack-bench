@@ -26,12 +26,10 @@ export class SummaryStreamService implements OnModuleInit, OnModuleDestroy {
       this.changeStream = collection.watch([], { fullDocument: 'updateLookup' });
 
       this.changeStream.on('change', (change) => {
-        if (change.fullDocument) {
-          this.gateway.emitSummaryUpdate({
-            data: change.fullDocument.data,
-            meta: change.fullDocument.meta,
-          });
+        if (!change.fullDocument) {
+          return;
         }
+        this.emitSummary(change.fullDocument).catch(() => undefined);
       });
 
       this.changeStream.on('error', () => {
@@ -69,5 +67,46 @@ export class SummaryStreamService implements OnModuleInit, OnModuleDestroy {
       }
       this.changeStream = null;
     }
+  }
+
+  private async emitSummary(doc: Record<string, any>) {
+    const totals = doc.totals || {};
+    const statusCounts = doc.statusCounts || {};
+    const hasMaterialized = Object.keys(totals).length > 0 || Object.keys(statusCounts).length > 0;
+
+    if (!hasMaterialized && doc.data) {
+      this.gateway.emitSummaryUpdate({
+        data: doc.data,
+        meta: doc.meta,
+      });
+      return;
+    }
+
+    const statusBreakdown = Object.entries(statusCounts)
+      .map(([key, count]) => ({ _id: key, count: Number(count) || 0 }))
+      .sort((a, b) => b.count - a.count);
+
+    let topProcedures: Array<{ _id: string; count: number }> = [];
+    try {
+      const db = await getDb();
+      topProcedures = await db.collection('stats_procedure_counts')
+        .find({})
+        .sort({ count: -1 })
+        .limit(5)
+        .project({ _id: 1, count: 1 })
+        .toArray();
+    } catch {
+      topProcedures = [];
+    }
+
+    this.gateway.emitSummaryUpdate({
+      data: {
+        totalClaims: totals.totalClaims || 0,
+        totalAmount: totals.totalAmount || 0,
+        statusBreakdown,
+        topProcedures,
+      },
+      meta: doc.meta,
+    });
   }
 }

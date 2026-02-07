@@ -1,104 +1,55 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { getDb } from '../db';
-import { createLogger } from '../logger';
 
-const SUMMARY_REFRESH_MS = Number(process.env.SUMMARY_REFRESH_MS || 300000);
 const SUMMARY_DOC_ID = 'latest';
-const logger = createLogger('stats.service.ts');
+
+type SummaryDoc = {
+  totals?: {
+    totalClaims?: number;
+    totalAmount?: number;
+  };
+  statusCounts?: Record<string, number>;
+  data?: {
+    totalClaims?: number;
+    totalAmount?: number;
+    statusBreakdown?: Array<{ _id: string; count: number }>;
+    topProcedures?: Array<{ _id: string; count: number }>;
+  };
+  meta?: Record<string, unknown>;
+};
 
 @Injectable()
-export class StatsService implements OnModuleInit, OnModuleDestroy {
-  private refreshTimer: NodeJS.Timeout | null = null;
-
-  async onModuleInit() {
-    setTimeout(() => {
-      this.refreshSummary().catch(() => undefined);
-    }, 0);
-    this.refreshTimer = setInterval(() => {
-      this.refreshSummary().catch(() => undefined);
-    }, SUMMARY_REFRESH_MS);
-  }
-
-  async onModuleDestroy() {
-    if (this.refreshTimer) {
-      clearInterval(this.refreshTimer);
-      this.refreshTimer = null;
-    }
-  }
-
-  private async computeSummary() {
-    const db = await getDb();
-    const collection = db.collection('claims');
-
-    const [totalClaims, totalAmount, statusBreakdown, topProcedures] = await Promise.all([
-      collection.countDocuments(),
-      collection.aggregate([
-        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
-      ]).toArray(),
-      collection.aggregate([
-        { $group: { _id: '$status', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-      ]).toArray(),
-      collection.aggregate([
-        { $unwind: '$procedureCodes' },
-        { $group: { _id: '$procedureCodes', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-        { $limit: 5 },
-    ]).toArray(),
-    ]);
-
-    return {
-      totalClaims,
-      totalAmount: totalAmount[0]?.total || 0,
-      statusBreakdown,
-      topProcedures,
-    };
-  }
-
-  private async refreshSummary() {
-    const start = Date.now();
-    logger.info('[summary-job] started');
-    const data = await this.computeSummary();
-    const db = await getDb();
-    const durationMs = Date.now() - start;
-    await db.collection('stats_summary').updateOne(
-      { _id: SUMMARY_DOC_ID },
-      {
-        $set: {
-          data,
-          meta: {
-            generatedAt: new Date().toISOString(),
-            durationMs,
-          },
-        },
-      },
-      { upsert: true }
-    );
-    logger.info(`[summary-job] finished in ${durationMs} ms`);
-  }
-
+export class StatsService {
   async summary() {
     const db = await getDb();
-    const cached = await db.collection('stats_summary').findOne({ _id: SUMMARY_DOC_ID });
-    if (!cached) {
-      const start = Date.now();
-      const data = await this.computeSummary();
-      const durationMs = Date.now() - start;
-      return {
-        data,
-        meta: {
-          generatedAt: new Date().toISOString(),
-          durationMs,
-          cached: false,
-        },
-      };
-    }
+    const summary = await db.collection<SummaryDoc>('stats_summary').findOne({ _id: SUMMARY_DOC_ID });
+    const totals = summary?.totals || {};
+    const statusCounts = summary?.statusCounts || {};
+    const legacyData = summary?.data;
+
+    const statusBreakdown = Object.entries(statusCounts).length > 0
+      ? Object.entries(statusCounts)
+          .map(([key, count]) => ({ _id: key, count: Number(count) || 0 }))
+          .sort((a, b) => b.count - a.count)
+      : (legacyData?.statusBreakdown || []);
+
+    const topProcedures = await db.collection('stats_procedure_counts')
+      .find({})
+      .sort({ count: -1 })
+      .limit(5)
+      .project({ _id: 1, count: 1 })
+      .toArray();
 
     return {
-      data: cached.data,
+      data: {
+        totalClaims: totals.totalClaims ?? legacyData?.totalClaims ?? 0,
+        totalAmount: totals.totalAmount ?? legacyData?.totalAmount ?? 0,
+        statusBreakdown,
+        topProcedures: topProcedures.length > 0 ? topProcedures : (legacyData?.topProcedures || []),
+      },
       meta: {
-        ...(cached.meta || {}),
-        cached: true,
+        ...(summary?.meta || {}),
+        cached: Boolean(summary),
       },
     };
   }

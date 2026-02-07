@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import ClaimsTable from './components/ClaimsTable';
 import PerfPanel from './components/PerfPanel';
 import SlowOpsTable from './components/SlowOpsTable';
 import { clearSlowOps, fetchClaims, fetchPerfReport, fetchSlowOps, fetchSummary, type Claim, type PerfReport, type SlowOp } from './api';
+import { formatDuration, isSlowDuration } from './utils/time';
 
 type Summary = {
   totalClaims: number;
@@ -42,28 +43,15 @@ const formatSlowOpDetails = (op: SlowOp) => ({
   ts: op.ts ? new Date(op.ts).toISOString() : op.ts,
 });
 
-const formatAge = (timestamp?: string) => {
+const formatTimestamp = (timestamp?: string) => {
   if (!timestamp) {
     return '—';
   }
-  const diffMs = Date.now() - new Date(timestamp).getTime();
-  if (Number.isNaN(diffMs) || diffMs < 0) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
     return '—';
   }
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) {
-    return `${seconds}s ago`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes}m ago`;
-  }
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours}h ago`;
-  }
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return date.toLocaleString();
 };
 
 const STORAGE_KEYS = {
@@ -113,12 +101,75 @@ export default function App() {
   const [meta, setMeta] = useState<{ total: number | null; queryTimeMs: number }>({ total: null, queryTimeMs: 0 });
   const [claimsLoadMs, setClaimsLoadMs] = useState<number | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
-  const [summaryLoadMs, setSummaryLoadMs] = useState<number | null>(null);
   const [perfLoading, setPerfLoading] = useState(true);
   const [perfLoadMs, setPerfLoadMs] = useState<number | null>(null);
+  const [claimsAbort, setClaimsAbort] = useState<AbortController | null>(null);
+  const [slowOpsAbort, setSlowOpsAbort] = useState<AbortController | null>(null);
+  const claimsRunning = Boolean(claimsAbort);
+  const slowOpsRunning = Boolean(slowOpsAbort);
+  const [summaryPulse, setSummaryPulse] = useState({
+    totalClaims: false,
+    totalAmount: false,
+    statusBreakdown: false,
+    topProcedures: false,
+  });
+  const summaryPrevRef = useRef<Summary | null>(null);
+  const summaryPulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const refreshSummary = async () => {
+    setSummaryLoading(true);
+    try {
+      const res = await fetchSummary();
+      setSummary(res.data);
+      setSummaryMeta(res.meta || null);
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  const refreshPerf = async () => {
+    const perfStart = performance.now();
+    setPerfLoading(true);
+    try {
+      const res = await fetchPerfReport();
+      setPerf(res);
+    } finally {
+      setPerfLoading(false);
+      setPerfLoadMs(Math.round(performance.now() - perfStart));
+    }
+  };
+
+  const refreshSlowOps = async () => {
+    const start = performance.now();
+    setSlowOpsLoading(true);
+    setSlowOpsLoadMs(null);
+    const controller = new AbortController();
+    setSlowOpsAbort(controller);
+    try {
+      const res = await fetchSlowOps({
+        minMs: Number(debouncedSlowFilters.minMs || '1000'),
+        limit: 200,
+        keyword: debouncedSlowFilters.keyword || undefined,
+        startDate: debouncedSlowFilters.startDate || undefined,
+        endDate: debouncedSlowFilters.endDate || undefined,
+      }, controller.signal);
+      setSlowOps(res.data || []);
+      setSlowOpsMeta(res.meta || {});
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') {
+        throw error;
+      }
+    } finally {
+      setSlowOpsLoading(false);
+      setSlowOpsLoadMs(Math.round(performance.now() - start));
+      setSlowOpsAbort(null);
+    }
+  };
 
   useEffect(() => {
-    const wsUrl = import.meta.env.VITE_WS_URL || 'http://localhost:3001';
+    const wsUrl = import.meta.env.VITE_WS_URL || (import.meta.env.DEV
+      ? 'http://localhost:3001'
+      : (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001'));
     const socket = io(wsUrl, { transports: ['websocket'] });
 
     socket.on('summary:update', (payload: { data?: Summary; meta?: SummaryMeta }) => {
@@ -191,54 +242,55 @@ export default function App() {
     if (activeTab !== 'claims') {
       return;
     }
-    const summaryStart = performance.now();
-    setSummaryLoading(true);
-    fetchSummary()
-      .then((res) => {
-        setSummary(res.data);
-        setSummaryMeta(res.meta || null);
-      })
-      .finally(() => {
-        setSummaryLoading(false);
-        setSummaryLoadMs(Math.round(performance.now() - summaryStart));
-      });
+    refreshSummary();
   }, [activeTab]);
 
   useEffect(() => {
-    const perfStart = performance.now();
-    setPerfLoading(true);
-    fetchPerfReport()
-      .then((res) => setPerf(res))
-      .finally(() => {
-        setPerfLoading(false);
-        setPerfLoadMs(Math.round(performance.now() - perfStart));
-      });
+    refreshPerf();
   }, []);
 
   useEffect(() => {
     if (activeTab !== 'slow') {
       return;
     }
-    const loadSlowOps = async () => {
-      const start = performance.now();
-      setSlowOpsLoading(true);
-      try {
-        const res = await fetchSlowOps({
-          minMs: Number(debouncedSlowFilters.minMs || '1000'),
-          limit: 200,
-          keyword: debouncedSlowFilters.keyword || undefined,
-          startDate: debouncedSlowFilters.startDate || undefined,
-          endDate: debouncedSlowFilters.endDate || undefined,
-        });
-        setSlowOps(res.data || []);
-        setSlowOpsMeta(res.meta || {});
-      } finally {
-        setSlowOpsLoading(false);
-        setSlowOpsLoadMs(Math.round(performance.now() - start));
-      }
-    };
-    loadSlowOps();
+    refreshSlowOps();
   }, [activeTab, debouncedSlowFilters]);
+
+  useEffect(() => {
+    if (!summary) {
+      return;
+    }
+    const prev = summaryPrevRef.current;
+    summaryPrevRef.current = summary;
+    if (!prev) {
+      return;
+    }
+
+    const serializeBreakdown = (items: Array<{ _id: string; count: number }>) =>
+      items.map((item) => `${item._id}:${item.count}`).join('|');
+
+    const nextPulse = {
+      totalClaims: summary.totalClaims !== prev.totalClaims,
+      totalAmount: summary.totalAmount !== prev.totalAmount,
+      statusBreakdown: serializeBreakdown(summary.statusBreakdown) !== serializeBreakdown(prev.statusBreakdown),
+      topProcedures: serializeBreakdown(summary.topProcedures) !== serializeBreakdown(prev.topProcedures),
+    };
+
+    if (Object.values(nextPulse).some(Boolean)) {
+      setSummaryPulse(nextPulse);
+      if (summaryPulseTimer.current) {
+        clearTimeout(summaryPulseTimer.current);
+      }
+      summaryPulseTimer.current = setTimeout(() => {
+        setSummaryPulse({
+          totalClaims: false,
+          totalAmount: false,
+          statusBreakdown: false,
+          topProcedures: false,
+        });
+      }, 700);
+    }
+  }, [summary]);
 
   const loadClaims = async (reset: boolean) => {
     if (reset) {
@@ -246,6 +298,7 @@ export default function App() {
       setClaims([]);
       setCursor(null);
       setHasMore(true);
+      setClaimsLoadMs(null);
     } else {
       if (!hasMore || loadingMore) {
         return;
@@ -255,22 +308,29 @@ export default function App() {
 
     const start = performance.now();
     const cursorParam = reset ? '' : (cursor ?? '');
+    const controller = new AbortController();
+    setClaimsAbort(controller);
     try {
       const res = await fetchClaims({
         ...params,
         pageSize: String(PAGE_SIZE),
         cursor: cursorParam,
         includeTotal: '0',
-      });
+      }, controller.signal);
 
       setClaims((prev) => (reset ? res.data : [...prev, ...res.data]));
       setCursor(res.meta.nextCursor);
       setHasMore(Boolean(res.meta.hasMore));
       setMeta({ total: res.meta.total, queryTimeMs: res.meta.queryTimeMs });
       setClaimsLoadMs(Math.round(performance.now() - start));
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') {
+        throw error;
+      }
     } finally {
       setLoading(false);
       setLoadingMore(false);
+      setClaimsAbort(null);
     }
   };
 
@@ -318,30 +378,30 @@ export default function App() {
       {activeTab === 'claims' ? (
         <>
           <section className="panel">
-            <h2>Portfolio Summary</h2>
+            <div className="panel-header">
+              <h2>Portfolio Summary</h2>
+              <div className="load-meta">
+                Updated: {formatTimestamp(summaryMeta?.generatedAt)}
+              </div>
+            </div>
             {summaryLoading ? (
-              <div>Loading...</div>
+              <div className="load-meta loading">Loading...</div>
             ) : summary ? (
               <>
-                <div className="load-meta">Loaded in {summaryLoadMs} ms</div>
-                <div className="load-meta">
-                  As of {formatAge(summaryMeta?.generatedAt)}
-                  {summaryMeta?.durationMs ? ` · Job ${summaryMeta.durationMs} ms` : ''}
-                </div>
                 <div className="metrics">
-                  <div className="metric-card">
+                  <div className={`metric-card${summaryPulse.totalClaims ? ' pop' : ''}`}>
                     <h3>Total Claims</h3>
                     <p>{summary.totalClaims.toLocaleString()}</p>
                   </div>
-                  <div className="metric-card">
+                  <div className={`metric-card${summaryPulse.totalAmount ? ' pop' : ''}`}>
                     <h3>Total Amount</h3>
                     <p>${summary.totalAmount.toLocaleString()}</p>
                   </div>
-                  <div className="metric-card">
+                  <div className={`metric-card${summaryPulse.statusBreakdown ? ' pop' : ''}`}>
                     <h3>Status Breakdown</h3>
                     <p>{summary.statusBreakdown.map((item) => `${item._id}: ${item.count}`).join(' | ')}</p>
                   </div>
-                  <div className="metric-card">
+                  <div className={`metric-card${summaryPulse.topProcedures ? ' pop' : ''}`}>
                     <h3>Top Procedures</h3>
                     <p>{summary.topProcedures.map((item) => `${item._id}: ${item.count}`).join(' | ')}</p>
                   </div>
@@ -353,6 +413,42 @@ export default function App() {
           </section>
 
           <section className="panel">
+            <div className="filter-actions">
+              <div className="filter-actions-left">
+                <button
+                  className={`icon-button${claimsRunning ? ' danger' : ''}`}
+                  type="button"
+                  title={claimsRunning ? 'Stop query' : 'Refresh results'}
+                  aria-label={claimsRunning ? 'Stop query' : 'Refresh results'}
+                  onClick={() => {
+                    if (claimsRunning) {
+                      claimsAbort?.abort();
+                      return;
+                    }
+                    loadClaims(true);
+                  }}
+                >
+                  {claimsRunning ? '■' : '↻'}
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Clear filters"
+                  aria-label="Clear filters"
+                  onClick={() => setFilters(defaultFilters)}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="filter-actions-right">
+                {claimsRunning ? <div className="load-meta loading">Loading...</div> : null}
+                {!claimsRunning && claimsLoadMs !== null ? (
+                  <div className={`load-meta${isSlowDuration(claimsLoadMs) ? ' slow' : ''}`}>
+                    Loaded in {formatDuration(claimsLoadMs)}
+                  </div>
+                ) : null}
+              </div>
+            </div>
             <div className="filters">
               <label>
                 Keyword
@@ -403,23 +499,18 @@ export default function App() {
                 Start Date
                 <input type="date" value={filters.startDate} onChange={(e) => updateFilter('startDate', e.target.value)} />
               </label>
-              <label>
-                End Date
-                <input type="date" value={filters.endDate} onChange={(e) => updateFilter('endDate', e.target.value)} />
-              </label>
-            </div>
+            <label>
+              End Date
+              <input type="date" value={filters.endDate} onChange={(e) => updateFilter('endDate', e.target.value)} />
+            </label>
+          </div>
 
-            {loading && claims.length === 0 ? (
-              <div>Loading...</div>
-            ) : (
-              <ClaimsTable
-                data={claims}
-                hasMore={hasMore}
-                isLoadingMore={loadingMore}
-                onLoadMore={() => loadClaims(false)}
-              />
-            )}
-            {claimsLoadMs !== null ? <div className="load-meta">Loaded in {claimsLoadMs} ms</div> : null}
+            <ClaimsTable
+              data={claims}
+              hasMore={hasMore}
+              isLoadingMore={loadingMore}
+              onLoadMore={() => loadClaims(false)}
+            />
           </section>
         </>
       ) : activeTab === 'perf' ? (
@@ -431,6 +522,42 @@ export default function App() {
       ) : (
         <section className="panel">
           <h2>Slow Queries (MongoDB Profiler)</h2>
+          <div className="filter-actions">
+            <div className="filter-actions-left">
+              <button
+                className={`icon-button${slowOpsRunning ? ' danger' : ''}`}
+                type="button"
+                title={slowOpsRunning ? 'Stop query' : 'Refresh results'}
+                aria-label={slowOpsRunning ? 'Stop query' : 'Refresh results'}
+                onClick={() => {
+                  if (slowOpsRunning) {
+                    slowOpsAbort?.abort();
+                    return;
+                  }
+                  refreshSlowOps();
+                }}
+              >
+                {slowOpsRunning ? '■' : '↻'}
+              </button>
+              <button
+                className="icon-button"
+                type="button"
+                title="Clear filters"
+                aria-label="Clear filters"
+                onClick={() => setSlowFilters(defaultSlowFilters)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="filter-actions-right">
+              {slowOpsRunning ? <div className="load-meta loading">Loading...</div> : null}
+              {!slowOpsRunning && slowOpsLoadMs !== null ? (
+                <div className={`load-meta${isSlowDuration(slowOpsLoadMs) ? ' slow' : ''}`}>
+                  Loaded in {formatDuration(slowOpsLoadMs)}
+                </div>
+              ) : null}
+            </div>
+          </div>
           <div className="filters">
             <label>
               Keyword
@@ -461,19 +588,14 @@ export default function App() {
             </label>
           </div>
 
-          {slowOpsLoading ? (
-            <div>Loading...</div>
-          ) : (
-            <>
-              {slowOpsLoadMs !== null ? <div className="load-meta">Loaded in {slowOpsLoadMs} ms</div> : null}
-              {slowOpsMeta?.message ? <div className="load-meta">{String(slowOpsMeta.message)}</div> : null}
-              {slowOps.length > 0 ? (
-                <SlowOpsTable data={slowOps} onSelect={setSelectedSlowOp} />
-              ) : (
-                <div className="load-meta">No queries match the current filters.</div>
-              )}
-            </>
-          )}
+          <>
+            {slowOpsMeta?.message ? <div className="load-meta">{String(slowOpsMeta.message)}</div> : null}
+            {slowOps.length > 0 ? (
+              <SlowOpsTable data={slowOps} onSelect={setSelectedSlowOp} />
+            ) : !slowOpsLoading ? (
+              <div className="load-meta">No queries match the current filters.</div>
+            ) : null}
+          </>
         </section>
       )}
 
