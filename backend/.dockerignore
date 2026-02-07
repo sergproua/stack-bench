@@ -1,6 +1,7 @@
 node_modules
 dist
-reports
+reports/*
+!reports/last-report.json
 seed-data
 .cache
 .DS_Store
