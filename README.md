@@ -149,6 +149,11 @@ Services:
 
 Frontend proxies `/api` and `/socket.io` to the backend.
 
+Important for prod `.env`:
+- Set `MONGODB_URI` to the service hostname, not localhost, e.g.  
+  `MONGODB_URI=mongodb://mongodb:27017/?replicaSet=rs0`
+- If running MongoDB in Compose, set `MONGO_REPLICA_HOST=mongodb:27017` so the replica set advertises the correct host.
+
 ## Import/Export With Compression
 Export:
 ```bash
