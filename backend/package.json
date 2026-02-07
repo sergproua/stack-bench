@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node dist/main.js",
     "start:dev": "node -r @swc-node/register src/main.ts",
-    "build": "npm run typecheck && swc src -d dist --source-maps",
+    "build": "npm run typecheck && swc src -d dist --source-maps --strip-leading-paths",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "seed": "tsx scripts/seed.ts",
     "seed:generate": "tsx scripts/seed-generate.ts",
