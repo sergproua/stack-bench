@@ -5,7 +5,9 @@ dotenv.config();
 
 const DEFAULT_SIZE = 500_000;
 const LARGE_SIZE = 5_000_000;
+const XL_SIZE = 50_000_000;
 const BATCH_SIZE = 1_000;
+const DEFAULT_CONCURRENCY = 4;
 
 const FIRST_NAMES = ['Ava', 'Noah', 'Mia', 'Liam', 'Emma', 'Ethan', 'Olivia', 'Mason', 'Sophia', 'Logan'];
 const LAST_NAMES = ['Smith', 'Johnson', 'Brown', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez', 'Hernandez', 'Lopez'];
@@ -37,24 +39,41 @@ function pickMany<T>(arr: T[], count: number, rand: () => number) {
 }
 
 async function main() {
+  const startedAt = Date.now();
   const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
   const dbName = process.env.MONGODB_DB || 'health_claims';
 
   const sizeArg = process.argv.find((arg) => arg.startsWith('--size='));
   const reset = process.argv.includes('--reset');
   const scaleArg = process.argv.find((arg) => arg.startsWith('--scale='));
+  const concurrencyArg = process.argv.find((arg) => arg.startsWith('--concurrency='));
+  const skipIndexes = process.argv.includes('--no-indexes');
 
   let totalClaims = DEFAULT_SIZE;
   if (sizeArg) {
     totalClaims = Number(sizeArg.split('=')[1]);
   } else if (scaleArg) {
-    totalClaims = scaleArg.split('=')[1] === 'large' ? LARGE_SIZE : DEFAULT_SIZE;
+    const scale = scaleArg.split('=')[1];
+    if (scale === 'large') {
+      totalClaims = LARGE_SIZE;
+    } else if (scale === 'xl') {
+      totalClaims = XL_SIZE;
+    } else {
+      totalClaims = DEFAULT_SIZE;
+    }
   }
+
+  const requestedConcurrency = concurrencyArg
+    ? Number(concurrencyArg.split('=')[1])
+    : Number(process.env.SEED_CONCURRENCY || DEFAULT_CONCURRENCY);
+  const concurrency = Number.isFinite(requestedConcurrency) && requestedConcurrency > 0
+    ? Math.floor(requestedConcurrency)
+    : DEFAULT_CONCURRENCY;
 
   const membersCount = Math.max(50_000, Math.floor(totalClaims / 5));
   const providersCount = Math.max(5_000, Math.floor(totalClaims / 50));
 
-  const client = new MongoClient(uri);
+  const client = new MongoClient(uri, { maxPoolSize: Math.max(10, concurrency * 2) });
   await client.connect();
   const db = client.db(dbName);
 
@@ -74,7 +93,23 @@ async function main() {
   const memberIds: ObjectId[] = [];
   const providerIds: ObjectId[] = [];
 
-  const membersBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
+  const enqueueWrite = async (pending: Promise<unknown>[], promise: Promise<unknown>) => {
+    pending.push(promise);
+    if (pending.length >= concurrency) {
+      await Promise.all(pending);
+      pending.length = 0;
+    }
+  };
+
+  const flushWrites = async (pending: Promise<unknown>[]) => {
+    if (pending.length > 0) {
+      await Promise.all(pending);
+      pending.length = 0;
+    }
+  };
+
+  let membersBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
+  const memberWrites: Promise<unknown>[] = [];
   for (let i = 0; i < membersCount; i += 1) {
     const _id = new ObjectId();
     memberIds.push(_id);
@@ -93,12 +128,15 @@ async function main() {
       },
     });
     if (membersBatch.length === BATCH_SIZE || i === membersCount - 1) {
-      await db.collection('members').bulkWrite(membersBatch);
-      membersBatch.length = 0;
+      const batch = membersBatch;
+      membersBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
+      await enqueueWrite(memberWrites, db.collection('members').bulkWrite(batch, { ordered: false }));
     }
   }
+  await flushWrites(memberWrites);
 
-  const providersBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
+  let providersBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
+  const providerWrites: Promise<unknown>[] = [];
   for (let i = 0; i < providersCount; i += 1) {
     const _id = new ObjectId();
     providerIds.push(_id);
@@ -115,10 +153,12 @@ async function main() {
       },
     });
     if (providersBatch.length === BATCH_SIZE || i === providersCount - 1) {
-      await db.collection('providers').bulkWrite(providersBatch);
-      providersBatch.length = 0;
+      const batch = providersBatch;
+      providersBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
+      await enqueueWrite(providerWrites, db.collection('providers').bulkWrite(batch, { ordered: false }));
     }
   }
+  await flushWrites(providerWrites);
 
   await db.collection('procedures').insertMany(
     CPT_CODES.map((code) => ({ code, description: `Procedure ${code}` }))
@@ -127,8 +167,9 @@ async function main() {
     ICD_CODES.map((code) => ({ code, description: `Diagnosis ${code}` }))
   );
 
-  const claimsBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
-  const paymentsBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
+  let claimsBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
+  let paymentsBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
+  const claimWrites: Promise<unknown>[] = [];
 
   for (let i = 0; i < totalClaims; i += 1) {
     const memberId = pick(memberIds, rand);
@@ -178,19 +219,38 @@ async function main() {
     });
 
     if (claimsBatch.length === BATCH_SIZE || i === totalClaims - 1) {
-      await db.collection('claims').bulkWrite(claimsBatch);
-      await db.collection('payments').bulkWrite(paymentsBatch);
-      claimsBatch.length = 0;
-      paymentsBatch.length = 0;
-      if ((i + 1) % (BATCH_SIZE * 10) === 0) {
+      const claimsToWrite = claimsBatch;
+      const paymentsToWrite = paymentsBatch;
+      claimsBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
+      paymentsBatch = [] as Array<{ insertOne: { document: Record<string, unknown> } }>;
+      await enqueueWrite(
+        claimWrites,
+        Promise.all([
+          db.collection('claims').bulkWrite(claimsToWrite, { ordered: false }),
+          db.collection('payments').bulkWrite(paymentsToWrite, { ordered: false }),
+        ])
+      );
+      if ((i + 1) % 50_000 === 0) {
         // eslint-disable-next-line no-console
         console.log(`Inserted ${i + 1} / ${totalClaims} claims`);
       }
     }
   }
+  await flushWrites(claimWrites);
+
+  if (!skipIndexes) {
+    // eslint-disable-next-line no-console
+    console.log('Creating indexes...');
+    await db.collection('claims').createIndexes([
+      { key: { serviceDate: -1, _id: -1 } },
+      { key: { status: 1, totalAmount: -1 } },
+      { key: { memberRegion: 1, providerSpecialty: 1 } },
+      { key: { searchText: 'text' } },
+    ]);
+  }
 
   // eslint-disable-next-line no-console
-  console.log('Seeding complete');
+  console.log(`Seeding complete in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
   await client.close();
 }
 

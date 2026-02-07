@@ -62,6 +62,14 @@ export class ClaimsQueryDto {
   @IsOptional()
   @Type(() => Number)
   maxAmount?: number;
+
+  @IsOptional()
+  @IsString()
+  cursor?: string;
+
+  @IsOptional()
+  @IsString()
+  includeTotal?: string;
 }
 
 export type ClaimsQuery = ClaimsQueryDto;

@@ -5,6 +5,7 @@ dotenv.config();
 
 let client: MongoClient | null = null;
 let db: Db | null = null;
+let profilerInitialized = false;
 
 export async function getDb(): Promise<Db> {
   if (db) {
@@ -15,6 +16,15 @@ export async function getDb(): Promise<Db> {
   client = new MongoClient(uri, { maxPoolSize: 20 });
   await client.connect();
   db = client.db(dbName);
+  if (process.env.PROFILER_ENABLED === '1' && !profilerInitialized) {
+    const slowMs = Number(process.env.PROFILER_SLOW_MS || 1000);
+    try {
+      await db.command({ profile: 1, slowms: slowMs });
+      profilerInitialized = true;
+    } catch {
+      profilerInitialized = true;
+    }
+  }
   return db;
 }
 

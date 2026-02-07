@@ -1,10 +1,126 @@
 {
   "meta": {
-    "generatedAt": null,
-    "database": null
+    "generatedAt": "2026-02-07T07:22:48.588Z",
+    "database": "health_claims"
   },
-  "baselineResults": [],
-  "optimizedResults": [],
-  "slowQueries": [],
-  "actions": []
+  "baselineResults": [
+    {
+      "label": "Recent claims by status",
+      "durationMs": 16,
+      "docsExamined": 505,
+      "keysExamined": 505,
+      "indexUsed": null
+    },
+    {
+      "label": "High amount claims",
+      "durationMs": 2053,
+      "docsExamined": 5000000,
+      "keysExamined": 0,
+      "indexUsed": null
+    },
+    {
+      "label": "Region + specialty",
+      "durationMs": 15,
+      "docsExamined": 3446,
+      "keysExamined": 3446,
+      "indexUsed": null
+    },
+    {
+      "label": "Member/provider search",
+      "durationMs": 10444,
+      "docsExamined": 5000000,
+      "keysExamined": 5000000,
+      "indexUsed": null
+    },
+    {
+      "label": "Top procedures",
+      "durationMs": 4996,
+      "indexUsed": null
+    }
+  ],
+  "optimizedResults": [
+    {
+      "label": "Recent claims by status",
+      "durationMs": 4,
+      "docsExamined": 505,
+      "keysExamined": 505,
+      "indexUsed": null
+    },
+    {
+      "label": "High amount claims",
+      "durationMs": 2037,
+      "docsExamined": 5000000,
+      "keysExamined": 0,
+      "indexUsed": null
+    },
+    {
+      "label": "Region + specialty",
+      "durationMs": 13,
+      "docsExamined": 3446,
+      "keysExamined": 3446,
+      "indexUsed": null
+    },
+    {
+      "label": "Member/provider search",
+      "durationMs": 20872,
+      "docsExamined": 5000000,
+      "keysExamined": 6629429,
+      "indexUsed": "searchText_text"
+    },
+    {
+      "label": "Top procedures",
+      "durationMs": 4856,
+      "indexUsed": null
+    }
+  ],
+  "slowQueries": [
+    {
+      "label": "Recent claims by status",
+      "baselineMs": 16,
+      "optimizedMs": 4,
+      "improvement": 4,
+      "docsExamined": 505,
+      "keysExamined": 505,
+      "indexUsed": null
+    },
+    {
+      "label": "High amount claims",
+      "baselineMs": 2053,
+      "optimizedMs": 2037,
+      "improvement": 1.01,
+      "docsExamined": 5000000,
+      "keysExamined": 0,
+      "indexUsed": null
+    },
+    {
+      "label": "Region + specialty",
+      "baselineMs": 15,
+      "optimizedMs": 13,
+      "improvement": 1.15,
+      "docsExamined": 3446,
+      "keysExamined": 3446,
+      "indexUsed": null
+    },
+    {
+      "label": "Member/provider search",
+      "baselineMs": 10444,
+      "optimizedMs": 20872,
+      "improvement": 0.5,
+      "docsExamined": 5000000,
+      "keysExamined": 5000000,
+      "indexUsed": "searchText_text"
+    },
+    {
+      "label": "Top procedures",
+      "baselineMs": 4996,
+      "optimizedMs": 4856,
+      "improvement": 1.03,
+      "indexUsed": null
+    }
+  ],
+  "actions": [
+    "Add compound indexes for high-selectivity filters (memberId + serviceDate).",
+    "Use text index for keyword search across member/provider fields.",
+    "Avoid full collection scans by limiting aggregation stages and projecting needed fields."
+  ]
 }

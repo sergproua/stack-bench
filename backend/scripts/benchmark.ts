@@ -11,17 +11,49 @@ type BenchmarkResult = {
   docsExamined?: number;
   keysExamined?: number;
   indexUsed?: string | null;
+  error?: string;
 };
 
-async function runFind(collection: any, label: string, filter: any, sort: any) {
-  const start = Date.now();
-  await collection.find(filter).sort(sort).limit(100).toArray();
-  const durationMs = Date.now() - start;
+const MAX_TIME_MS = Number(process.env.BENCH_MAX_MS || 15000);
+const SKIP_EXPLAIN = process.env.BENCH_SKIP_EXPLAIN === '1';
 
-  const explain = await collection.find(filter).sort(sort).limit(100).explain('executionStats');
-  const stats = explain.executionStats || {};
-  const winningPlan = explain.queryPlanner?.winningPlan;
-  const indexUsed = winningPlan?.inputStage?.indexName || null;
+async function runFind(collection: any, label: string, filter: any, sort: any) {
+  // eslint-disable-next-line no-console
+  console.log(`Running query: ${label}`);
+  const start = Date.now();
+  let durationMs = 0;
+  try {
+    await collection.find(filter).sort(sort).limit(100).maxTimeMS(MAX_TIME_MS).toArray();
+    durationMs = Date.now() - start;
+  } catch (error) {
+    durationMs = Date.now() - start;
+    // eslint-disable-next-line no-console
+    console.warn(`Query failed for ${label}: ${(error as Error).message}`);
+    return { label, durationMs, error: (error as Error).message } as BenchmarkResult;
+  }
+
+  if (SKIP_EXPLAIN) {
+    return { label, durationMs } as BenchmarkResult;
+  }
+
+  let stats: any = {};
+  let indexUsed: string | null = null;
+  try {
+    // eslint-disable-next-line no-console
+    console.log(`Explaining query: ${label}`);
+    const explain = await collection
+      .find(filter)
+      .sort(sort)
+      .limit(100)
+      .maxTimeMS(MAX_TIME_MS)
+      .explain('executionStats');
+    stats = explain.executionStats || {};
+    const winningPlan = explain.queryPlanner?.winningPlan;
+    indexUsed = winningPlan?.inputStage?.indexName || null;
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn(`Explain failed for ${label}: ${(error as Error).message}`);
+  }
 
   return {
     label,
@@ -33,12 +65,34 @@ async function runFind(collection: any, label: string, filter: any, sort: any) {
 }
 
 async function runAggregate(collection: any, label: string, pipeline: any[]) {
+  // eslint-disable-next-line no-console
+  console.log(`Running aggregation: ${label}`);
   const start = Date.now();
-  await collection.aggregate(pipeline).toArray();
-  const durationMs = Date.now() - start;
+  let durationMs = 0;
+  try {
+    await collection.aggregate(pipeline).maxTimeMS(MAX_TIME_MS).toArray();
+    durationMs = Date.now() - start;
+  } catch (error) {
+    durationMs = Date.now() - start;
+    // eslint-disable-next-line no-console
+    console.warn(`Aggregation failed for ${label}: ${(error as Error).message}`);
+    return { label, durationMs, error: (error as Error).message } as BenchmarkResult;
+  }
 
-  const explain = await collection.aggregate(pipeline).explain('executionStats');
-  const stats = explain.executionStats || {};
+  if (SKIP_EXPLAIN) {
+    return { label, durationMs } as BenchmarkResult;
+  }
+
+  let stats: any = {};
+  try {
+    // eslint-disable-next-line no-console
+    console.log(`Explaining aggregation: ${label}`);
+    const explain = await collection.aggregate(pipeline).maxTimeMS(MAX_TIME_MS).explain('executionStats');
+    stats = explain.executionStats || {};
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn(`Explain failed for ${label}: ${(error as Error).message}`);
+  }
 
   return {
     label,
@@ -49,31 +103,44 @@ async function runAggregate(collection: any, label: string, pipeline: any[]) {
   } as BenchmarkResult;
 }
 
+async function ensureTextIndex(collection: any) {
+  // eslint-disable-next-line no-console
+  console.log('Ensuring text index exists...');
+  await collection.createIndex({ searchText: 'text' });
+}
+
 async function applyIndexes(collection: any) {
+  // eslint-disable-next-line no-console
+  console.log('Applying optimization indexes...');
   await Promise.all([
     collection.createIndex({ memberId: 1, serviceDate: -1 }),
     collection.createIndex({ providerId: 1, serviceDate: -1 }),
     collection.createIndex({ status: 1, totalAmount: -1 }),
     collection.createIndex({ memberRegion: 1, providerSpecialty: 1 }),
     collection.createIndex({ serviceDate: -1 }),
-    collection.createIndex({ searchText: 'text' }),
   ]);
+  await ensureTextIndex(collection);
 }
 
 async function main() {
   const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
   const dbName = process.env.MONGODB_DB || 'health_claims';
 
+  // eslint-disable-next-line no-console
+  console.log(`Connecting to ${uri}/${dbName}...`);
   const client = new MongoClient(uri);
   await client.connect();
   const db = client.db(dbName);
   const collection = db.collection('claims');
+  // eslint-disable-next-line no-console
+  console.log('Connected. Starting benchmark...');
 
-  const queries = [
+  const searchLabel = 'Member/provider search';
+  const baselineQueries = [
     () => runFind(collection, 'Recent claims by status', { status: 'submitted' }, { serviceDate: -1 }),
     () => runFind(collection, 'High amount claims', { totalAmount: { $gte: 5000 } }, { totalAmount: -1 }),
     () => runFind(collection, 'Region + specialty', { memberRegion: 'South', providerSpecialty: 'Cardiology' }, { serviceDate: -1 }),
-    () => runFind(collection, 'Text search', { $text: { $search: 'Provider 10' } }, { score: { $meta: 'textScore' } }),
+    () => runFind(collection, searchLabel, { searchText: { $regex: 'Provider 10 99213', $options: 'i' } }, { serviceDate: -1 }),
     () => runAggregate(collection, 'Top procedures', [
       { $unwind: '$procedureCodes' },
       { $group: { _id: '$procedureCodes', count: { $sum: 1 } } },
@@ -82,15 +149,32 @@ async function main() {
     ]),
   ];
 
+  // eslint-disable-next-line no-console
+  console.log('Running baseline queries...');
   const baselineResults: BenchmarkResult[] = [];
-  for (const run of queries) {
+  for (const run of baselineQueries) {
     baselineResults.push(await run());
   }
 
+  // eslint-disable-next-line no-console
+  console.log('Baseline complete. Applying indexes and re-running...');
   await applyIndexes(collection);
 
+  const optimizedQueries = [
+    () => runFind(collection, 'Recent claims by status', { status: 'submitted' }, { serviceDate: -1 }),
+    () => runFind(collection, 'High amount claims', { totalAmount: { $gte: 5000 } }, { totalAmount: -1 }),
+    () => runFind(collection, 'Region + specialty', { memberRegion: 'South', providerSpecialty: 'Cardiology' }, { serviceDate: -1 }),
+    () => runFind(collection, searchLabel, { $text: { $search: 'Provider 10 99213' } }, { serviceDate: -1 }),
+    () => runAggregate(collection, 'Top procedures', [
+      { $unwind: '$procedureCodes' },
+      { $group: { _id: '$procedureCodes', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 5 },
+    ]),
+  ];
+
   const optimizedResults: BenchmarkResult[] = [];
-  for (const run of queries) {
+  for (const run of optimizedQueries) {
     optimizedResults.push(await run());
   }
 
@@ -122,6 +206,8 @@ async function main() {
     ],
   };
 
+  // eslint-disable-next-line no-console
+  console.log('Writing report...');
   await mkdir(join(process.cwd(), 'reports'), { recursive: true });
   await writeFile(join(process.cwd(), 'reports', 'last-report.json'), JSON.stringify(report, null, 2));
 

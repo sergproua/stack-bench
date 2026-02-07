@@ -14,9 +14,11 @@ export type ClaimsResponse = {
   meta: {
     page: number;
     pageSize: number;
-    total: number;
+    total: number | null;
     sortBy: string;
     sortDir: string;
+    hasMore: boolean | null;
+    nextCursor: string | null;
     queryTimeMs: number;
   };
 };
@@ -31,6 +33,24 @@ export type PerfReport = {
     keysExamined?: number;
     indexUsed?: string | null;
   }>;
+  meta: Record<string, unknown>;
+};
+
+export type SlowOp = {
+  ts?: string;
+  millis?: number;
+  op?: string;
+  ns?: string;
+  command?: Record<string, unknown>;
+  planSummary?: string;
+  nreturned?: number;
+  keysExamined?: number;
+  docsExamined?: number;
+  responseLength?: number;
+};
+
+export type SlowOpsResponse = {
+  data: SlowOp[];
   meta: Record<string, unknown>;
 };
 
@@ -59,4 +79,42 @@ export async function fetchPerfReport() {
     throw new Error('Failed to load performance report');
   }
   return res.json() as Promise<PerfReport>;
+}
+
+export async function fetchSlowOps(params: {
+  minMs?: number;
+  limit?: number;
+  keyword?: string;
+  startDate?: string;
+  endDate?: string;
+} = {}) {
+  const search = new URLSearchParams();
+  if (params.minMs) {
+    search.set('minMs', String(params.minMs));
+  }
+  if (params.limit) {
+    search.set('limit', String(params.limit));
+  }
+  if (params.keyword) {
+    search.set('keyword', params.keyword);
+  }
+  if (params.startDate) {
+    search.set('startDate', params.startDate);
+  }
+  if (params.endDate) {
+    search.set('endDate', params.endDate);
+  }
+  const res = await fetch(`${API_URL}/stats/slow-ops?${search.toString()}`);
+  if (!res.ok) {
+    throw new Error('Failed to load slow ops');
+  }
+  return res.json() as Promise<SlowOpsResponse>;
+}
+
+export async function clearSlowOps() {
+  const res = await fetch(`${API_URL}/stats/slow-ops`, { method: 'DELETE' });
+  if (!res.ok) {
+    throw new Error('Failed to clear slow ops');
+  }
+  return res.json() as Promise<{ data: { deletedCount: number } }>;
 }

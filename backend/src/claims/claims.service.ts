@@ -4,6 +4,19 @@ import { getDb } from '../db';
 import { ClaimsQuery } from './claims.dto';
 
 const ALLOWED_SORT_FIELDS = new Set(['serviceDate', 'totalAmount', 'status', 'memberRegion', 'providerSpecialty']);
+const CURSOR_SEPARATOR = '|';
+
+function parseCursor(cursor: string) {
+  const [dateStr, idStr] = cursor.split(CURSOR_SEPARATOR);
+  if (!dateStr || !idStr || !ObjectId.isValid(idStr)) {
+    return null;
+  }
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return { date, id: new ObjectId(idStr) };
+}
 
 @Injectable()
 export class ClaimsService {
@@ -11,25 +24,26 @@ export class ClaimsService {
     const db = await getDb();
     const collection = db.collection('claims');
 
-    const filter: Record<string, unknown> = {};
+    const baseFilter: Record<string, unknown> = {};
+    const andFilters: Record<string, unknown>[] = [];
 
     if (query.status) {
-      filter.status = query.status;
+      baseFilter.status = query.status;
     }
     if (query.region) {
-      filter.memberRegion = query.region;
+      baseFilter.memberRegion = query.region;
     }
     if (query.providerSpecialty) {
-      filter.providerSpecialty = query.providerSpecialty;
+      baseFilter.providerSpecialty = query.providerSpecialty;
     }
     if (query.startDate || query.endDate) {
-      filter.serviceDate = {
+      baseFilter.serviceDate = {
         ...(query.startDate ? { $gte: new Date(query.startDate) } : {}),
         ...(query.endDate ? { $lte: new Date(query.endDate) } : {}),
       };
     }
     if (typeof query.minAmount === 'number' || typeof query.maxAmount === 'number') {
-      filter.totalAmount = {
+      baseFilter.totalAmount = {
         ...(typeof query.minAmount === 'number' ? { $gte: query.minAmount } : {}),
         ...(typeof query.maxAmount === 'number' ? { $lte: query.maxAmount } : {}),
       };
@@ -37,32 +51,93 @@ export class ClaimsService {
     if (query.codes) {
       const codes = query.codes.split(',').map((code) => code.trim()).filter(Boolean);
       if (codes.length > 0) {
-        filter.$or = [
-          { procedureCodes: { $in: codes } },
-          { diagnosisCodes: { $in: codes } },
-        ];
+        andFilters.push({
+          $or: [
+            { procedureCodes: { $in: codes } },
+            { diagnosisCodes: { $in: codes } },
+          ],
+        });
       }
     }
     if (query.q) {
-      filter.$text = { $search: query.q };
+      andFilters.push({ $text: { $search: query.q } });
     }
 
-    const sortBy = ALLOWED_SORT_FIELDS.has(query.sortBy) ? query.sortBy : 'serviceDate';
+    if (Object.keys(baseFilter).length > 0) {
+      andFilters.push(baseFilter);
+    }
+
+    const hasCursor = query.cursor !== undefined;
+    const sortBy = hasCursor ? 'serviceDate' : (ALLOWED_SORT_FIELDS.has(query.sortBy) ? query.sortBy : 'serviceDate');
     const sortDir = query.sortDir === 'asc' ? 1 : -1;
     const page = query.page || 1;
     const pageSize = query.pageSize || 50;
+    const includeTotal = query.includeTotal === '1' || query.includeTotal === 'true';
+
+    let cursorFilter: Record<string, unknown> | null = null;
+    if (query.cursor) {
+      const parsed = parseCursor(query.cursor);
+      if (parsed) {
+        cursorFilter = sortDir === -1
+          ? {
+              $or: [
+                { serviceDate: { $lt: parsed.date } },
+                { serviceDate: parsed.date, _id: { $lt: parsed.id } },
+              ],
+            }
+          : {
+              $or: [
+                { serviceDate: { $gt: parsed.date } },
+                { serviceDate: parsed.date, _id: { $gt: parsed.id } },
+              ],
+            };
+      }
+    }
+    if (cursorFilter) {
+      andFilters.push(cursorFilter);
+    }
+
+    const filter = andFilters.length === 0
+      ? {}
+      : (andFilters.length === 1 ? andFilters[0] : { $and: andFilters });
 
     const start = Date.now();
-    const cursor = collection
-      .find(filter)
-      .sort({ [sortBy]: sortDir })
-      .skip((page - 1) * pageSize)
-      .limit(pageSize);
+    let items = [] as Record<string, unknown>[];
+    let total: number | null = null;
+    let nextCursor: string | null = null;
+    let hasMore: boolean | null = null;
 
-    const [items, total] = await Promise.all([
-      cursor.toArray(),
-      collection.countDocuments(filter),
-    ]);
+    if (hasCursor) {
+      const results = await collection
+        .find(filter)
+        .sort({ serviceDate: sortDir, _id: sortDir })
+        .limit(pageSize + 1)
+        .toArray();
+
+      hasMore = results.length > pageSize;
+      items = hasMore ? results.slice(0, pageSize) : results;
+      const last = items[items.length - 1] as { _id?: ObjectId; serviceDate?: Date } | undefined;
+      if (hasMore && last?._id && last?.serviceDate instanceof Date) {
+        nextCursor = `${last.serviceDate.toISOString()}${CURSOR_SEPARATOR}${last._id.toString()}`;
+      }
+    } else {
+      const cursor = collection
+        .find(filter)
+        .sort({ [sortBy]: sortDir })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize);
+
+      if (includeTotal) {
+        const [pageItems, count] = await Promise.all([
+          cursor.toArray(),
+          collection.countDocuments(filter),
+        ]);
+        items = pageItems;
+        total = count;
+      } else {
+        items = await cursor.toArray();
+      }
+    }
 
     return {
       data: items,
@@ -71,7 +146,9 @@ export class ClaimsService {
         pageSize,
         total,
         sortBy,
-        sortDir: query.sortDir,
+        sortDir: sortDir === 1 ? 'asc' : 'desc',
+        hasMore,
+        nextCursor,
         queryTimeMs: Date.now() - start,
       },
     };

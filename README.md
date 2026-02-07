@@ -36,6 +36,7 @@ npm install
 cd backend
 npm run seed -- --scale=small --reset
 npm run seed -- --scale=large --reset
+npm run seed -- --scale=xl --reset
 ```
 
 4. Run backend and frontend:
