@@ -1,8 +1,10 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { getDb } from '../db';
+import { createLogger } from '../logger';
 
 const SUMMARY_REFRESH_MS = Number(process.env.SUMMARY_REFRESH_MS || 300000);
 const SUMMARY_DOC_ID = 'latest';
+const logger = createLogger('stats.service.ts');
 
 @Injectable()
 export class StatsService implements OnModuleInit, OnModuleDestroy {
@@ -55,8 +57,7 @@ export class StatsService implements OnModuleInit, OnModuleDestroy {
 
   private async refreshSummary() {
     const start = Date.now();
-    // eslint-disable-next-line no-console
-    console.log('[summary-job] started');
+    logger.info('[summary-job] started');
     const data = await this.computeSummary();
     const db = await getDb();
     const durationMs = Date.now() - start;
@@ -73,8 +74,7 @@ export class StatsService implements OnModuleInit, OnModuleDestroy {
       },
       { upsert: true }
     );
-    // eslint-disable-next-line no-console
-    console.log(`[summary-job] finished in ${durationMs} ms`);
+    logger.info(`[summary-job] finished in ${durationMs} ms`);
   }
 
   async summary() {

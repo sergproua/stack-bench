@@ -2,8 +2,10 @@ import { MongoClient } from 'mongodb';
 import * as dotenv from 'dotenv';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
+import { createLogger } from '../src/logger';
 
 dotenv.config();
+const logger = createLogger('benchmark.ts');
 
 type BenchmarkResult = {
   label: string;
@@ -19,7 +21,7 @@ const SKIP_EXPLAIN = process.env.BENCH_SKIP_EXPLAIN === '1';
 
 async function runFind(collection: any, label: string, filter: any, sort: any) {
   // eslint-disable-next-line no-console
-  console.log(`Running query: ${label}`);
+  logger.info(`Running query: ${label}`);
   const start = Date.now();
   let durationMs = 0;
   try {
@@ -28,7 +30,7 @@ async function runFind(collection: any, label: string, filter: any, sort: any) {
   } catch (error) {
     durationMs = Date.now() - start;
     // eslint-disable-next-line no-console
-    console.warn(`Query failed for ${label}: ${(error as Error).message}`);
+    logger.warn(`Query failed for ${label}: ${(error as Error).message}`);
     return { label, durationMs, error: (error as Error).message } as BenchmarkResult;
   }
 
@@ -40,7 +42,7 @@ async function runFind(collection: any, label: string, filter: any, sort: any) {
   let indexUsed: string | null = null;
   try {
     // eslint-disable-next-line no-console
-    console.log(`Explaining query: ${label}`);
+    logger.info(`Explaining query: ${label}`);
     const explain = await collection
       .find(filter)
       .sort(sort)
@@ -52,7 +54,7 @@ async function runFind(collection: any, label: string, filter: any, sort: any) {
     indexUsed = winningPlan?.inputStage?.indexName || null;
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.warn(`Explain failed for ${label}: ${(error as Error).message}`);
+    logger.warn(`Explain failed for ${label}: ${(error as Error).message}`);
   }
 
   return {
@@ -66,7 +68,7 @@ async function runFind(collection: any, label: string, filter: any, sort: any) {
 
 async function runAggregate(collection: any, label: string, pipeline: any[]) {
   // eslint-disable-next-line no-console
-  console.log(`Running aggregation: ${label}`);
+  logger.info(`Running aggregation: ${label}`);
   const start = Date.now();
   let durationMs = 0;
   try {
@@ -75,7 +77,7 @@ async function runAggregate(collection: any, label: string, pipeline: any[]) {
   } catch (error) {
     durationMs = Date.now() - start;
     // eslint-disable-next-line no-console
-    console.warn(`Aggregation failed for ${label}: ${(error as Error).message}`);
+    logger.warn(`Aggregation failed for ${label}: ${(error as Error).message}`);
     return { label, durationMs, error: (error as Error).message } as BenchmarkResult;
   }
 
@@ -86,12 +88,12 @@ async function runAggregate(collection: any, label: string, pipeline: any[]) {
   let stats: any = {};
   try {
     // eslint-disable-next-line no-console
-    console.log(`Explaining aggregation: ${label}`);
+    logger.info(`Explaining aggregation: ${label}`);
     const explain = await collection.aggregate(pipeline).maxTimeMS(MAX_TIME_MS).explain('executionStats');
     stats = explain.executionStats || {};
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.warn(`Explain failed for ${label}: ${(error as Error).message}`);
+    logger.warn(`Explain failed for ${label}: ${(error as Error).message}`);
   }
 
   return {
@@ -105,13 +107,13 @@ async function runAggregate(collection: any, label: string, pipeline: any[]) {
 
 async function ensureTextIndex(collection: any) {
   // eslint-disable-next-line no-console
-  console.log('Ensuring text index exists...');
+  logger.info('Ensuring text index exists...');
   await collection.createIndex({ searchText: 'text' });
 }
 
 async function applyIndexes(collection: any) {
   // eslint-disable-next-line no-console
-  console.log('Applying optimization indexes...');
+  logger.info('Applying optimization indexes...');
   await Promise.all([
     collection.createIndex({ memberId: 1, serviceDate: -1 }),
     collection.createIndex({ providerId: 1, serviceDate: -1 }),
@@ -127,13 +129,13 @@ async function main() {
   const dbName = process.env.MONGODB_DB || 'health_claims';
 
   // eslint-disable-next-line no-console
-  console.log(`Connecting to ${uri}/${dbName}...`);
+  logger.info(`Connecting to ${uri}/${dbName}...`);
   const client = new MongoClient(uri);
   await client.connect();
   const db = client.db(dbName);
   const collection = db.collection('claims');
   // eslint-disable-next-line no-console
-  console.log('Connected. Starting benchmark...');
+  logger.info('Connected. Starting benchmark...');
 
   const searchLabel = 'Member/provider search';
   const baselineQueries = [
@@ -150,14 +152,14 @@ async function main() {
   ];
 
   // eslint-disable-next-line no-console
-  console.log('Running baseline queries...');
+  logger.info('Running baseline queries...');
   const baselineResults: BenchmarkResult[] = [];
   for (const run of baselineQueries) {
     baselineResults.push(await run());
   }
 
   // eslint-disable-next-line no-console
-  console.log('Baseline complete. Applying indexes and re-running...');
+  logger.info('Baseline complete. Applying indexes and re-running...');
   await applyIndexes(collection);
 
   const optimizedQueries = [
@@ -207,17 +209,17 @@ async function main() {
   };
 
   // eslint-disable-next-line no-console
-  console.log('Writing report...');
+  logger.info('Writing report...');
   await mkdir(join(process.cwd(), 'reports'), { recursive: true });
   await writeFile(join(process.cwd(), 'reports', 'last-report.json'), JSON.stringify(report, null, 2));
 
   // eslint-disable-next-line no-console
-  console.log('Benchmark complete. Report written to reports/last-report.json');
+  logger.info('Benchmark complete. Report written to reports/last-report.json');
   await client.close();
 }
 
 main().catch((error) => {
   // eslint-disable-next-line no-console
-  console.error(error);
+  logger.error(error);
   process.exit(1);
 });

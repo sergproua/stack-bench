@@ -3,10 +3,12 @@ version: '3.8'
 services:
   mongodb:
     image: mongo:8.2.4
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
 
 volumes:
   mongo_data:

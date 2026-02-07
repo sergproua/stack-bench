@@ -21,6 +21,8 @@ Optionally use Docker:
 docker-compose up -d
 ```
 
+The Docker setup runs MongoDB as a single-node replica set so change streams work.
+
 2. Install dependencies:
 
 ```bash
@@ -38,6 +40,16 @@ npm run seed -- --scale=small --reset
 npm run seed -- --scale=large --reset
 npm run seed -- --scale=xl --reset
 ```
+
+For large or repeatable loads, generate seed files once and load them as needed:
+
+```bash
+cd backend
+npm run seed:generate -- --scale=large --out=seed-data
+npm run seed:load -- --out=seed-data --reset --concurrency=4
+```
+
+The generator uses CPU-1 workers by default and caps claims files at 10 (use `--concurrency=` and `--max-files=` to override).
 
 4. Run backend and frontend:
 

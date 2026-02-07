@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { io } from 'socket.io-client';
 import ClaimsTable from './components/ClaimsTable';
 import PerfPanel from './components/PerfPanel';
 import SlowOpsTable from './components/SlowOpsTable';
@@ -115,6 +116,22 @@ export default function App() {
   const [summaryLoadMs, setSummaryLoadMs] = useState<number | null>(null);
   const [perfLoading, setPerfLoading] = useState(true);
   const [perfLoadMs, setPerfLoadMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    const wsUrl = import.meta.env.VITE_WS_URL || 'http://localhost:3001';
+    const socket = io(wsUrl, { transports: ['websocket'] });
+
+    socket.on('summary:update', (payload: { data?: Summary; meta?: SummaryMeta }) => {
+      if (payload?.data) {
+        setSummary(payload.data);
+        setSummaryMeta(payload.meta || null);
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {

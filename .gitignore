@@ -23,5 +23,8 @@ backend/dist/
 # Local reports
 backend/reports/*.json
 
+# Seed files
+backend/seed-data/
+
 # Scratch
 todos/

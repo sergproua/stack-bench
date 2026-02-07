@@ -1,7 +1,9 @@
 import { MongoClient, ObjectId } from 'mongodb';
 import * as dotenv from 'dotenv';
+import { createLogger } from '../src/logger';
 
 dotenv.config();
+const logger = createLogger('seed.ts');
 
 const DEFAULT_SIZE = 500_000;
 const LARGE_SIZE = 5_000_000;
@@ -231,16 +233,14 @@ async function main() {
         ])
       );
       if ((i + 1) % 50_000 === 0) {
-        // eslint-disable-next-line no-console
-        console.log(`Inserted ${i + 1} / ${totalClaims} claims`);
+        logger.info(`Inserted ${i + 1} / ${totalClaims} claims`);
       }
     }
   }
   await flushWrites(claimWrites);
 
   if (!skipIndexes) {
-    // eslint-disable-next-line no-console
-    console.log('Creating indexes...');
+    logger.info('Creating indexes...');
     await db.collection('claims').createIndexes([
       { key: { serviceDate: -1, _id: -1 } },
       { key: { status: 1, totalAmount: -1 } },
@@ -249,13 +249,11 @@ async function main() {
     ]);
   }
 
-  // eslint-disable-next-line no-console
-  console.log(`Seeding complete in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
+  logger.info(`Seeding complete in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
   await client.close();
 }
 
 main().catch((error) => {
-  // eslint-disable-next-line no-console
-  console.error(error);
+  logger.error(error);
   process.exit(1);
 });
