@@ -3,6 +3,27 @@ import type { ChangeStream } from 'mongodb';
 import { getDb } from '../db';
 import { SummaryGateway } from './summary.gateway';
 
+type SummaryDoc = {
+  _id?: string;
+  totals?: {
+    totalClaims?: number;
+    totalAmount?: number;
+  };
+  statusCounts?: Record<string, number>;
+  meta?: Record<string, unknown>;
+  data?: {
+    totalClaims?: number;
+    totalAmount?: number;
+    statusBreakdown?: Array<{ _id: string; count: number }>;
+    topProcedures?: Array<{ _id: string; count: number }>;
+  };
+};
+
+type ProcedureCountDoc = {
+  _id: string;
+  count: number;
+};
+
 @Injectable()
 export class SummaryStreamService implements OnModuleInit, OnModuleDestroy {
   private changeStream: ChangeStream | null = null;
@@ -22,11 +43,11 @@ export class SummaryStreamService implements OnModuleInit, OnModuleDestroy {
     await this.stopStream();
     try {
       const db = await getDb();
-      const collection = db.collection('stats_summary');
+      const collection = db.collection<SummaryDoc>('stats_summary');
       this.changeStream = collection.watch([], { fullDocument: 'updateLookup' });
 
       this.changeStream.on('change', (change) => {
-        if (!change.fullDocument) {
+        if (!('fullDocument' in change) || !change.fullDocument) {
           return;
         }
         this.emitSummary(change.fullDocument).catch(() => undefined);
@@ -69,7 +90,7 @@ export class SummaryStreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async emitSummary(doc: Record<string, any>) {
+  private async emitSummary(doc: SummaryDoc) {
     const totals = doc.totals || {};
     const statusCounts = doc.statusCounts || {};
     const hasMaterialized = Object.keys(totals).length > 0 || Object.keys(statusCounts).length > 0;
@@ -86,14 +107,14 @@ export class SummaryStreamService implements OnModuleInit, OnModuleDestroy {
       .map(([key, count]) => ({ _id: key, count: Number(count) || 0 }))
       .sort((a, b) => b.count - a.count);
 
-    let topProcedures: Array<{ _id: string; count: number }> = [];
+    let topProcedures: ProcedureCountDoc[] = [];
     try {
       const db = await getDb();
-      topProcedures = await db.collection('stats_procedure_counts')
+      topProcedures = await db.collection<ProcedureCountDoc>('stats_procedure_counts')
         .find({})
         .sort({ count: -1 })
         .limit(5)
-        .project({ _id: 1, count: 1 })
+        .project<ProcedureCountDoc>({ _id: 1, count: 1 })
         .toArray();
     } catch {
       topProcedures = [];

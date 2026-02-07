@@ -4,6 +4,7 @@ import { getDb } from '../db';
 const SUMMARY_DOC_ID = 'latest';
 
 type SummaryDoc = {
+  _id?: string;
   totals?: {
     totalClaims?: number;
     totalAmount?: number;

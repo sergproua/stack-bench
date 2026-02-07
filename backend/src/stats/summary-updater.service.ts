@@ -13,6 +13,27 @@ type ClaimDoc = {
   procedureCodes?: string[];
 };
 
+type SummaryDoc = {
+  _id?: string;
+  totals?: {
+    totalClaims?: number;
+    totalAmount?: number;
+  };
+  statusCounts?: Record<string, number>;
+  meta?: Record<string, unknown>;
+  data?: {
+    totalClaims?: number;
+    totalAmount?: number;
+    statusBreakdown?: Array<{ _id: string; count: number }>;
+    topProcedures?: Array<{ _id: string; count: number }>;
+  };
+};
+
+type ProcedureCountDoc = {
+  _id: string;
+  count: number;
+};
+
 @Injectable()
 export class SummaryUpdaterService implements OnModuleInit, OnModuleDestroy {
   private changeStream: ChangeStream | null = null;
@@ -50,8 +71,8 @@ export class SummaryUpdaterService implements OnModuleInit, OnModuleDestroy {
     this.bootstrapRunning = true;
     try {
     const db = await getDb();
-    const summary = await db.collection('stats_summary').findOne({ _id: SUMMARY_DOC_ID });
-    const hasProcedures = await db.collection('stats_procedure_counts').countDocuments({}, { limit: 1 });
+    const summary = await db.collection<SummaryDoc>('stats_summary').findOne({ _id: SUMMARY_DOC_ID });
+    const hasProcedures = await db.collection<ProcedureCountDoc>('stats_procedure_counts').countDocuments({}, { limit: 1 });
     if (summary && hasProcedures > 0) {
       return;
     }
@@ -77,16 +98,16 @@ export class SummaryUpdaterService implements OnModuleInit, OnModuleDestroy {
       statusBreakdown.map((item) => [String(item._id || 'unknown'), Number(item.count) || 0]),
     );
 
-    await db.collection('stats_procedure_counts').deleteMany({});
+    await db.collection<ProcedureCountDoc>('stats_procedure_counts').deleteMany({});
     if (procedureCounts.length > 0) {
-      await db.collection('stats_procedure_counts').insertMany(
-        procedureCounts.map((item) => ({ _id: item._id, count: item.count })),
+      await db.collection<ProcedureCountDoc>('stats_procedure_counts').insertMany(
+        procedureCounts.map((item) => ({ _id: String(item._id), count: Number(item.count) || 0 })),
         { ordered: false },
       );
     }
 
     const durationMs = Date.now() - start;
-    await db.collection('stats_summary').updateOne(
+    await db.collection<SummaryDoc>('stats_summary').updateOne(
       { _id: SUMMARY_DOC_ID },
       {
         $set: {
@@ -112,7 +133,7 @@ export class SummaryUpdaterService implements OnModuleInit, OnModuleDestroy {
 
   private async migrateLegacySummaryIfNeeded() {
     const db = await getDb();
-    const summary = await db.collection('stats_summary').findOne({ _id: SUMMARY_DOC_ID });
+    const summary = await db.collection<SummaryDoc>('stats_summary').findOne({ _id: SUMMARY_DOC_ID });
     if (!summary || !summary.data) {
       return;
     }
@@ -150,7 +171,7 @@ export class SummaryUpdaterService implements OnModuleInit, OnModuleDestroy {
       set.statusCounts = statusCounts;
     }
 
-    await db.collection('stats_summary').updateOne(
+    await db.collection<SummaryDoc>('stats_summary').updateOne(
       { _id: SUMMARY_DOC_ID },
       { $set: set },
     );
@@ -160,17 +181,16 @@ export class SummaryUpdaterService implements OnModuleInit, OnModuleDestroy {
     await this.stopStream();
     try {
       const db = await getDb();
-      const collection = db.collection('claims');
+      const collection = db.collection<ClaimDoc>('claims');
       this.changeStream = collection.watch([{ $match: { operationType: 'insert' } }], {
         fullDocument: 'updateLookup',
       });
 
       this.changeStream.on('change', (change) => {
-        const doc = change.fullDocument as ClaimDoc | undefined;
-        if (!doc) {
+        if (!('fullDocument' in change) || !change.fullDocument) {
           return;
         }
-        this.applyInsert(doc).catch(() => undefined);
+        this.applyInsert(change.fullDocument).catch(() => undefined);
       });
 
       this.changeStream.on('error', () => {
@@ -226,7 +246,7 @@ export class SummaryUpdaterService implements OnModuleInit, OnModuleDestroy {
     };
     inc[`statusCounts.${status}`] = 1;
 
-    await db.collection('stats_summary').updateOne(
+    await db.collection<SummaryDoc>('stats_summary').updateOne(
       { _id: SUMMARY_DOC_ID },
       {
         $inc: inc,
@@ -240,7 +260,7 @@ export class SummaryUpdaterService implements OnModuleInit, OnModuleDestroy {
     );
 
     if (procedureCodes.length > 0) {
-      await db.collection('stats_procedure_counts').bulkWrite(
+      await db.collection<ProcedureCountDoc>('stats_procedure_counts').bulkWrite(
         procedureCodes.map((code) => ({
           updateOne: {
             filter: { _id: code },
