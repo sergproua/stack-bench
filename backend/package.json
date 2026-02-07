@@ -5,13 +5,14 @@
   "description": "NestJS backend for MongoDB performance demo",
   "scripts": {
     "start": "node dist/main.js",
-    "start:dev": "ts-node-dev --respawn --transpile-only src/main.ts",
-    "build": "tsc -p tsconfig.json",
-    "seed": "ts-node scripts/seed.ts",
-    "seed:generate": "ts-node scripts/seed-generate.ts",
-    "seed:load": "ts-node scripts/seed-load.ts",
-    "indexes": "ts-node scripts/indexes.ts",
-    "bench": "ts-node scripts/benchmark.ts"
+    "start:dev": "tsx watch src/main.ts",
+    "build": "npm run typecheck && swc src -d dist --source-maps",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "seed": "tsx scripts/seed.ts",
+    "seed:generate": "tsx scripts/seed-generate.ts",
+    "seed:load": "tsx scripts/seed-load.ts",
+    "indexes": "tsx scripts/indexes.ts",
+    "bench": "tsx scripts/benchmark.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",
@@ -28,9 +29,10 @@
     "socket.io": "^4.7.4"
   },
   "devDependencies": {
+    "@swc/cli": "^0.3.11",
+    "@swc/core": "^1.4.17",
     "@types/node": "^20.11.17",
-    "ts-node": "^10.9.2",
-    "ts-node-dev": "^2.0.0",
+    "tsx": "^4.7.0",
     "typescript": "^5.3.3"
   }
 }
