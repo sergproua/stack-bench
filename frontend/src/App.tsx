@@ -218,7 +218,12 @@ export default function App() {
   }, [slowFilters]);
 
   const params = useMemo(() => {
-    const entries = Object.entries(debouncedFilters).filter(([, value]) => value);
+    const entries = Object.entries(debouncedFilters).filter(([key, value]) => {
+      if (key === 'q') {
+        return false; // keyword filter temporarily disabled
+      }
+      return Boolean(value);
+    });
     return Object.fromEntries(entries) as Record<string, string>;
   }, [debouncedFilters]);
 
@@ -450,10 +455,12 @@ export default function App() {
               </div>
             </div>
             <div className="filters">
+              {/*
               <label>
                 Keyword
                 <input value={filters.q} onChange={(e) => updateFilter('q', e.target.value)} placeholder="Member, provider, code" />
               </label>
+              */}
               <label>
                 Status
                 <select value={filters.status} onChange={(e) => updateFilter('status', e.target.value)}>
