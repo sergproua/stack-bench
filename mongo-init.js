@@ -10,6 +10,16 @@ function waitForMongo() {
   return false;
 }
 
+function init() {
+  print('Initializing replica set...');
+  rs.initiate({
+    _id: 'rs0',
+    members: [
+      { _id: 0, host: desiredHost }
+    ]
+  });
+}
+
 const desiredHost = (typeof process !== 'undefined' && process.env && process.env.MONGO_REPLICA_HOST)
   ? process.env.MONGO_REPLICA_HOST
   : 'localhost:27017';
@@ -33,17 +43,11 @@ if (!waitForMongo()) {
       } catch (reconfigError) {
         print('Replica set already initialized');
       }
-      return;
+    } else {
+      init()
     }
   } catch (error) {
     // not initialized
+    init()
   }
-
-  print('Initializing replica set...');
-  rs.initiate({
-    _id: 'rs0',
-    members: [
-      { _id: 0, host: desiredHost }
-    ]
-  });
 }
