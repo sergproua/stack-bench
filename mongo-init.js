@@ -10,6 +10,10 @@ function waitForMongo() {
   return false;
 }
 
+const desiredHost = (typeof process !== 'undefined' && process.env && process.env.MONGO_REPLICA_HOST)
+  ? process.env.MONGO_REPLICA_HOST
+  : 'localhost:27017';
+
 function init() {
   print('Initializing replica set...');
   rs.initiate({
@@ -19,10 +23,6 @@ function init() {
     ]
   });
 }
-
-const desiredHost = (typeof process !== 'undefined' && process.env && process.env.MONGO_REPLICA_HOST)
-  ? process.env.MONGO_REPLICA_HOST
-  : 'localhost:27017';
 
 if (!waitForMongo()) {
   print('Mongo did not become ready in time');
