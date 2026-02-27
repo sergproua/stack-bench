@@ -132,10 +132,11 @@ async function runTasksInParallel(
 function spawnWorker(args: string[]) {
   const scriptPath = resolve(__dirname, 'seed-generate.ts');
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const tsNodeRegister = require.resolve('ts-node/register');
+  const tsxCliPath = require.resolve('tsx/cli');
 
   return new Promise<void>((resolveWorker, rejectWorker) => {
-    const child = spawn(process.execPath, ['-r', tsNodeRegister, scriptPath, '--worker', ...args], {
+    // Use the same TS runtime as package scripts instead of requiring ts-node.
+    const child = spawn(process.execPath, [tsxCliPath, scriptPath, '--worker', ...args], {
       stdio: 'inherit',
     });
     child.on('error', rejectWorker);
