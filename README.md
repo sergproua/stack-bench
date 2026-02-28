@@ -148,11 +148,13 @@ Services:
 - Frontend: `http://localhost:8080`
 
 Frontend proxies `/api` and `/socket.io` to the backend.
+Set `FRONTEND_BASE_PATH` in root `.env` to host the frontend under a subpath (for example `FRONTEND_BASE_PATH=/dashboard`).
 
 Important for prod `.env`:
 - Set `MONGODB_URI` to the service hostname, not localhost, e.g.  
   `MONGODB_URI=mongodb://mongodb:27017/?replicaSet=rs0`
 - If running MongoDB in Compose, set `MONGO_REPLICA_HOST=mongodb:27017` so the replica set advertises the correct host.
+- Optional frontend path prefix: `FRONTEND_BASE_PATH=/` (default) or `FRONTEND_BASE_PATH=/dashboard`
 
 ## Import/Export With Compression
 Export:
