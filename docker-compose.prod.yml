@@ -34,8 +34,11 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_BASE_PATH: ${FRONTEND_BASE_PATH:-/}
         FRONTEND_BASE_PATH: ${FRONTEND_BASE_PATH:-/}
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_WS_URL: ${VITE_WS_URL:-}
+    environment:
+      FRONTEND_BASE_PATH: ${FRONTEND_BASE_PATH:-/}
     depends_on:
       - backend
     ports:

@@ -141,6 +141,7 @@ Build and run:
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
 ```
+Compose reads `.env` from the repo root (same directory as `docker-compose.prod.yml`), not `backend/.env`.
 
 Services:
 - MongoDB: `mongodb:27017`
@@ -149,12 +150,18 @@ Services:
 
 Frontend proxies `/api` and `/socket.io` to the backend.
 Set `FRONTEND_BASE_PATH` in root `.env` to host the frontend under a subpath (for example `FRONTEND_BASE_PATH=/dashboard`).
+The same variable is used for Vite build-time base URLs and Nginx runtime routing template.
 
 Important for prod `.env`:
 - Set `MONGODB_URI` to the service hostname, not localhost, e.g.  
   `MONGODB_URI=mongodb://mongodb:27017/?replicaSet=rs0`
 - If running MongoDB in Compose, set `MONGO_REPLICA_HOST=mongodb:27017` so the replica set advertises the correct host.
 - Optional frontend path prefix: `FRONTEND_BASE_PATH=/` (default) or `FRONTEND_BASE_PATH=/dashboard`
+- `FRONTEND_BASE_PATH` is normalized on startup, so `dashboard` and `/dashboard/` are treated as `/dashboard`
+- Optional frontend API/socket overrides (build-time): `VITE_API_URL=...`, `VITE_WS_URL=...`
+- Frontend `VITE_*` values are baked into static assets at image build time, so run with rebuild when `.env` changes:
+  `docker compose -f docker-compose.prod.yml up -d --build`
+- For subpath deployments, `/` redirects to `${FRONTEND_BASE_PATH}/` (for example `/dashboard/`).
 
 ## Import/Export With Compression
 Export:

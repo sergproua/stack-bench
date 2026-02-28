@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+raw="${FRONTEND_BASE_PATH:-/}"
+raw="$(printf '%s' "$raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+if [ -z "$raw" ] || [ "$raw" = "/" ]; then
+  norm="/"
+else
+  case "$raw" in
+    /*) norm="$raw" ;;
+    *) norm="/$raw" ;;
+  esac
+  norm="$(printf '%s' "$norm" | sed -e 's#//*#/#g' -e 's#/$##')"
+fi
+
+if ! printf '%s' "$norm" | grep -Eq '^/$|^(/[A-Za-z0-9_-]+)+$'; then
+  echo "Invalid FRONTEND_BASE_PATH: '$raw'. Use '/' or '/segment[/segment]' with [A-Za-z0-9_-]." >&2
+  exit 1
+fi
+
+if [ "$norm" = "/" ]; then
+  export FRONTEND_ROUTE_PREFIX=""
+  export FRONTEND_BASE_PATH_MATCH="/__no_base_path__"
+  export FRONTEND_REDIRECT_ROOT_TARGET=""
+else
+  export FRONTEND_ROUTE_PREFIX="$norm"
+  export FRONTEND_BASE_PATH_MATCH="$norm"
+  export FRONTEND_REDIRECT_ROOT_TARGET="$norm/"
+fi
+
+export FRONTEND_BASE_PATH_NORM="$norm"
+echo "FRONTEND_BASE_PATH normalized to '$FRONTEND_BASE_PATH_NORM'"
