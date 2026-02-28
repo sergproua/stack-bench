@@ -4,6 +4,7 @@ import ClaimsTable from './components/ClaimsTable';
 import PerfPanel from './components/PerfPanel';
 import SlowOpsTable from './components/SlowOpsTable';
 import { clearSlowOps, fetchClaims, fetchPerfReport, fetchSlowOps, fetchSummary, type Claim, type PerfReport, type SlowOp } from './api';
+import { SOCKET_IO_PATH } from './utils/basePath';
 import { formatDuration, isSlowDuration } from './utils/time';
 
 type Summary = {
@@ -170,7 +171,8 @@ export default function App() {
     const wsUrl = import.meta.env.VITE_WS_URL || (import.meta.env.DEV
       ? 'http://localhost:3001'
       : (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001'));
-    const socket = io(wsUrl, { transports: ['websocket'] });
+    const wsPath = import.meta.env.VITE_WS_PATH || SOCKET_IO_PATH;
+    const socket = io(wsUrl, { path: wsPath, transports: ['websocket'] });
 
     socket.on('summary:update', (payload: { data?: Summary; meta?: SummaryMeta }) => {
       if (payload?.data) {

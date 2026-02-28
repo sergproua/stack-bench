@@ -151,6 +151,7 @@ Services:
 Frontend proxies `/api` and `/socket.io` to the backend.
 Set `FRONTEND_BASE_PATH` in root `.env` to host the frontend under a subpath (for example `FRONTEND_BASE_PATH=/dashboard`).
 The same variable is used for Vite build-time base URLs and Nginx runtime routing template.
+When `FRONTEND_BASE_PATH` is not `/`, frontend API and websocket defaults are prefixed too (`/dashboard/api`, `/dashboard/socket.io`).
 
 Important for prod `.env`:
 - Set `MONGODB_URI` to the service hostname, not localhost, e.g.  

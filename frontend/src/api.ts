@@ -1,3 +1,5 @@
+import { API_PATH } from './utils/basePath';
+
 export type Claim = {
   _id: string;
   memberName: string;
@@ -59,7 +61,7 @@ const DEFAULT_API_URL = (() => {
     return 'http://localhost:3001/api';
   }
   if (typeof window !== 'undefined') {
-    return `${window.location.origin}/api`;
+    return `${window.location.origin}${API_PATH}`;
   }
   return 'http://localhost:3001/api';
 })();
